@@ -231,7 +231,7 @@ def setup_training_loop_kwargs(
 
     if aug == 'ada':
         args.ada_target = 0.6
-
+    
     elif aug == 'noaug':
         pass
 
@@ -482,11 +482,13 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     dnnlib.util.Logger(should_flush=True)
 
     # Setup training options.
+    # 여기서 위에 본 config를 설정하는 함수를 실행시킨다.
     try:
         run_desc, args = setup_training_loop_kwargs(**config_kwargs)
     except UserError as err:
+        # ctx는 아마 click과 관련된 것일듯
         ctx.fail(err)
-
+    
     # Pick output directory.
     prev_run_dirs = []
     if os.path.isdir(outdir):
@@ -511,8 +513,9 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     print(f'Conditional model:  {args.training_set_kwargs.use_labels}')
     print(f'Dataset x-flips:    {args.training_set_kwargs.xflip}')
     print()
-
+    
     # Dry run?
+    # dry run이면 모의 테스트라는 뜻인데 위의 config 설정이 잘 되었는지를 확인하려고 넣은 코드인듯
     if dry_run:
         print('Dry run; exiting.')
         return
@@ -525,9 +528,14 @@ def main(ctx, outdir, dry_run, **config_kwargs):
 
     # Launch processes.
     print('Launching processes...')
+    # 여기선 set_start_method를 따로 하게 하였음
+    # 그런데 어차피 다음에 나오는 multiprocessing.spawn의 argument 디폴트가 "spawn"이어서 안해도 상관없을 듯
     torch.multiprocessing.set_start_method('spawn')
+    # tempfild을 만드는데 이를 context manager로 구현하였다.
+    # block을 빠쪄나오는 순간 tempfile을 클린업 시키는 듯
     with tempfile.TemporaryDirectory() as temp_dir:
         if args.num_gpus == 1:
+            # gpus가 하나이면 서브 프로세스 하나만 만듬
             subprocess_fn(rank=0, args=args, temp_dir=temp_dir)
         else:
             torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir), nprocs=args.num_gpus)

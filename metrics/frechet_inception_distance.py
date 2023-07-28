@@ -22,6 +22,7 @@ def compute_fid(opts, max_real, num_gen):
     detector_url = 'https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/inception-2015-12-05.pt'
     detector_kwargs = dict(return_features=True) # Return raw features before the softmax layer.
 
+    # 
     mu_real, sigma_real = metric_utils.compute_feature_stats_for_dataset(
         opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
         rel_lo=0, rel_hi=0, capture_mean_cov=True, max_items=max_real).get_mean_cov()
@@ -30,10 +31,14 @@ def compute_fid(opts, max_real, num_gen):
         opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
         rel_lo=0, rel_hi=1, capture_mean_cov=True, max_items=num_gen).get_mean_cov()
 
+    # rank=0에서만 제대로 fid를 계산하도록 함
+    # 나머지 프로세스에선 feature 까지만 계산하도록 함
     if opts.rank != 0:
         return float('nan')
 
+    # feature의 평균 관련 계산
     m = np.square(mu_gen - mu_real).sum()
+    # feature의 stdev 관련 계산
     s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False) # pylint: disable=no-member
     fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
     return float(fid)

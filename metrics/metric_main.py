@@ -38,19 +38,27 @@ def list_valid_metrics():
 
 def calc_metric(metric, **kwargs): # See metric_utils.MetricOptions for the full list of arguments.
     assert is_valid_metric(metric)
+    # 계산이 필요한 옵션들이 있는 곳
     opts = metric_utils.MetricOptions(**kwargs)
 
     # Calculate.
     start_time = time.time()
+    # keyword string에 metric 이름이 있고 _metric_dict가 실행되도록
+    # 결과물이 dict에 저장
     results = _metric_dict[metric](opts)
     total_time = time.time() - start_time
 
     # Broadcast results.
     for key, value in list(results.items()):
         if opts.num_gpus > 1:
+            # 결과값이 numpy일수도 있어서?
+            # otps에 각 프로세스에 맞게 device가 들어가야 할텐데
             value = torch.as_tensor(value, dtype=torch.float64, device=opts.device)
+            # rank 0에서 계산한 결과를 다른 프로세스로 복제한다. 
             torch.distributed.broadcast(tensor=value, src=0)
+            # 복잡된 값
             value = float(value.cpu())
+        # 원래 results에 key를 맞춰 다시 value를 넣음 아마 torch.tensor(cpu)로 저장하고 싶은듯
         results[key] = value
 
     # Decorate with metadata.

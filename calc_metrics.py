@@ -17,6 +17,7 @@ import torch
 import dnnlib
 
 import legacy
+# 여기 metric_main을 import하면서 안에 있던게 register 되는 듯?
 from metrics import metric_main
 from metrics import metric_utils
 from torch_utils import training_stats
@@ -31,15 +32,17 @@ def subprocess_fn(rank, args, temp_dir):
     # Init torch.distributed.
     if args.num_gpus > 1:
         init_file = os.path.abspath(os.path.join(temp_dir, '.torch_distributed_init'))
-        if os.name == 'nt':
+        if os.name == 'nt': # 윈도우라면 seperator를 다음과 같이 처리
             init_method = 'file:///' + init_file.replace('\\', '/')
             torch.distributed.init_process_group(backend='gloo', init_method=init_method, rank=rank, world_size=args.num_gpus)
-        else:
+        else: # 리눅스
             init_method = f'file://{init_file}'
             torch.distributed.init_process_group(backend='nccl', init_method=init_method, rank=rank, world_size=args.num_gpus)
 
     # Init torch_utils.
     sync_device = torch.device('cuda', rank) if args.num_gpus > 1 else None
+    # 여러 프로세스에서 정보를 모을 때 반드시 실행되어야 하는 함수
+    # rank, sync_device를 global 변수로 설정한다. 
     training_stats.init_multiprocessing(rank=rank, sync_device=sync_device)
     if rank != 0 or not args.verbose:
         custom_ops.verbosity = 'none'
@@ -49,19 +52,27 @@ def subprocess_fn(rank, args, temp_dir):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
+    # Generator 객체를 생성
     G = copy.deepcopy(args.G).eval().requires_grad_(False).to(device)
     if rank == 0 and args.verbose:
         z = torch.empty([1, G.z_dim], device=device)
         c = torch.empty([1, G.c_dim], device=device)
+        # 모델 정보 출력을 위해
         misc.print_module_summary(G, [z, c])
 
     # Calculate each metric.
+    # 설정했던 metric list에 있는 metric에 대한 이름 (str)이 하나씩 metric_main.calc_metric으로 
+    # 들어가서 계산하도록 한다. 
     for metric in args.metrics:
+        # 0번째 터미널에선 print를 하도록 한다.
         if rank == 0 and args.verbose:
             print(f'Calculating {metric}...')
         progress = metric_utils.ProgressMonitor(verbose=args.verbose)
+        # 각 GPU process마다 결과를 계산하고 result_dict에 저장하는 상황
         result_dict = metric_main.calc_metric(metric=metric, G=G, dataset_kwargs=args.dataset_kwargs,
             num_gpus=args.num_gpus, rank=rank, device=device, progress=progress)
+        # Rank=0번째라면 report하는 함수를 실행
+        # 앞서 구한 result_dict를 활용 <- 아마 여기에 모든 process의 결과를 합칠 듯
         if rank == 0:
             metric_main.report_metric(result_dict, run_dir=args.run_dir, snapshot_pkl=args.network_pkl)
         if rank == 0 and args.verbose:
@@ -83,11 +94,12 @@ class CommaSeparatedList(click.ParamType):
         return value.split(',')
 
 #----------------------------------------------------------------------------
-
+# multigpu를 사용해서 빠르게 metric을 평가할 수 있도록 함
 @click.command()
 @click.pass_context
 @click.option('network_pkl', '--network', help='Network pickle filename or URL', metavar='PATH', required=True)
 @click.option('--metrics', help='Comma-separated list or "none"', type=CommaSeparatedList(), default='fid50k_full', show_default=True)
+# 데이터는 zip나 directory 모두 지원
 @click.option('--data', help='Dataset to evaluate metrics against (directory or zip) [default: same as training data]', metavar='PATH')
 @click.option('--mirror', help='Whether the dataset was augmented with x-flips during training [default: look up]', type=bool, metavar='BOOL')
 @click.option('--gpus', help='Number of GPUs to use', type=int, default=1, metavar='INT', show_default=True)
